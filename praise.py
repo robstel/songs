@@ -1,3 +1,4 @@
+import os
 import re
 import requests
 import webbrowser
@@ -14,8 +15,9 @@ re_copyright_fluff = re.compile(r"(Copyright|all rights reserved|used by permiss
 re_author_fluff = re.compile(r"\b(words|music)\b", re.IGNORECASE)
 
 
-class Praise:
-    def __init__(self) -> None:
+class PraiseScraper:
+    def __init__(self, out_folder) -> None:
+        self.out_folder = out_folder
         self.session = requests.Session()
         self.song_num = None
         self.title = None
@@ -25,7 +27,11 @@ class Praise:
         self.bridge_num = 0
         self.chorus_num = 0
         self.verse_order = []
-        self.lyrics_el = None
+        self.tree = None
+        self.verse_order_el = None
+        self.authors_el = None
+        self.url = None
+        self.filename = None
 
     def login(self, username, password):
 
@@ -38,7 +44,28 @@ class Praise:
         credentials = {"username": username, "password": password, "woocommerce-login-nonce": nonce, "login": "Log+in"}
         self.session.post("https://www.praise.org.uk/my-account/", credentials)
 
-    def get_song(self, song_num: str) -> str:
+    def download_song(self, song_num: str):
+
+        html = self._get_song(song_num)
+        soup = BeautifulSoup(html, "html.parser")
+        title_tag = self._get_title(soup)
+        related = soup.find("h2", string="Related Information")
+        self._get_authors(related)
+        self._get_themes(related)
+        self._get_copyright(related)
+
+        # Construct the output XML.
+        root_el = self._create_tree()
+        properties_el = self._create_properties(root_el)
+        self._create_authors(properties_el)
+        self._create_themes(properties_el)
+        self._create_songbooks(properties_el)
+        self._create_lyrics(title_tag, root_el)
+        self.verse_order_el.text = " ".join(self.verse_order)
+
+        self._write_output_file()
+
+    def _get_song(self, song_num: str) -> str:
         self.song_num = song_num
 
         # Send a search request for the song.
@@ -46,13 +73,11 @@ class Praise:
         soup = BeautifulSoup(response.text, "html.parser")
 
         # Extract the first search result.
-        url = soup.select_one("table.search-results tr td a")["href"]
+        self.url = soup.select_one("table.search-results tr td a")["href"]
 
         # Get the song page.
-        response = self.session.get(url)
-        self._convert_song(response.text)
-
-        return url
+        response = self.session.get(self.url)
+        return response.text
 
     def _get_title(self, soup):
         title_tag = soup.select_one("div.main-content div.textual h2")
@@ -82,37 +107,30 @@ class Praise:
             copyright = copyright_label.next_sibling.string
             self.copyright = re_copyright_fluff.sub("", copyright).strip().title()
 
-    def _convert_song(self, html: str):
-
-        soup = BeautifulSoup(html, "html.parser")
-        title_tag = self._get_title(soup)
-
-        related = soup.find("h2", string="Related Information")
-        self._get_authors(related)
-        self._get_themes(related)
-        self._get_copyright(related)
-
-        # Start constructing the output XML.
+    def _create_tree(self):
         root_el = Element(
             "song",
             {
                 "xmlns": "http://openlyrics.info/namespace/2009/song",
                 "version": "0.8",
-                "createdIn": "RobStel Praise! Downloader",
-                "modifiedDate": datetime.now().replace(microsecond=0).isoformat(),
+                "createdIn": "PraiseScraper",
+                "createdDate": datetime.now().replace(microsecond=0).isoformat(),
             },
         )
         root_el.text = "\n"
-        tree = ElementTree(root_el)
+        self.tree = ElementTree(root_el)
+        return root_el
 
-        # Properties elements.
+    def _create_properties(self, root_el):
         properties_el = self._create_element(root_el, "properties")
         titles_el = self._create_element(properties_el, "titles")
         self._create_element(titles_el, "title", self.title)
         self._create_element(properties_el, "copyright", self.copyright)
-        verse_order_el = self._create_element(properties_el, "verseOrder")
-        authors_el = self._create_element(properties_el, "authors")
+        self.verse_order_el = self._create_element(properties_el, "verseOrder")
+        return properties_el
 
+    def _create_authors(self, properties_el):
+        authors_el = self._create_element(properties_el, "authors")
         for author in self.authors:
             # Don't use the author text if there is is more than just a name.
             if re_author_fluff.search(author) is not None:
@@ -126,24 +144,20 @@ class Praise:
                 author = forename.lstrip() + " " + surname.rstrip()
             self._create_element(authors_el, "author", author)
 
+    def _create_themes(self, properties_el):
         if len(self.themes):
             themes_el = self._create_element(properties_el, "themes")
             for theme in self.themes:
                 self._create_element(themes_el, "theme", theme)
 
+    def _create_songbooks(self, properties_el):
         songbooks_el = self._create_element(properties_el, "songbooks")
         SubElement(songbooks_el, "songbook", {"name": "Praise!", "entry": self.song_num}).tail = "\n"
 
-        self.lyrics_el = self._create_element(root_el, "lyrics")
+    def _create_lyrics(self, title_tag, root_el):
+        lyrics_el = self._create_element(root_el, "lyrics")
         verses = title_tag.find_next_siblings("p")
-        self._get_verses(verses)
-
-        verse_order_el.text = " ".join(self.verse_order)
-
-        # Write the output XML file.
-        filename = self.song_num + "_" + re.sub(r"\W", "_", self.title) + ".xml"
-        tree.write(filename, encoding="unicode", xml_declaration=True)
-        print(filename)
+        self._create_verses(verses, lyrics_el)
 
     def _create_element(self, parent: Element, tag: str, text="\n") -> Element:
         element = SubElement(parent, tag)
@@ -151,7 +165,7 @@ class Praise:
         element.tail = "\n"
         return element
 
-    def _get_verses(self, verses):
+    def _create_verses(self, verses, lyrics_el):
         for verse_idx, verse in enumerate(verses):
             lines = [line for line in verse.stripped_strings]
             if len(lines) == 0:
@@ -163,9 +177,9 @@ class Praise:
                 # Split the verse number from the first line of the verse.
                 verse_num, lines[0] = re_verse_number.search(lines[0]).groups()
 
-            self._do_verse(verse_num, lines)
+            self._create_verse(verse_num, lines, lyrics_el)
 
-    def _do_verse(self, verse_num, lines):
+    def _create_verse(self, verse_num, lines, lyrics_el):
         is_chorus = False
         if verse_num:
             # It's a verse.
@@ -206,18 +220,31 @@ class Praise:
                 self.chorus_num += 1
                 name = f"c{self.chorus_num}"
 
-        verse_el = self._create_element(self.lyrics_el, "verse")
+        verse_el = self._create_element(lyrics_el, "verse")
         verse_el.set("name", name)
         self.verse_order.append(name)
+        lines_el, br_el = self._create_lines(lines, verse_el)
 
+        if is_chorus:
+            self._italicise_chorus(lines_el, br_el)
+
+    def _italicise_chorus(self, lines_el, br_el):
+        # Add {it} at the start of the first line
+        lines_el.text = "{it}" + lines_el.text
+        # Add {/it} at the end of the last line.
+        if br_el is None:
+            lines_el.text += "{/it}"
+        else:
+            br_el.tail += "{/it}"
+
+    def _create_lines(self, lines, verse_el):
         lines_el = self._create_element(verse_el, "lines")
-
         br_el = None
         for line_idx, line in enumerate(lines):
             num, line = re_verse_number.search(line).groups()
             if num is not None:
                 lines[line_idx] = line
-                self._do_verse(num, lines[line_idx:])
+                self._create_verse(num, lines[line_idx:])
                 break
 
             if line_idx == 0:
@@ -228,25 +255,24 @@ class Praise:
                 # as the tail.
                 br_el = SubElement(lines_el, "br")
                 br_el.tail = line
+        return lines_el, br_el
 
-        # For a chorus, add {it} at the start of the first line and {/it}
-        # at the end of the last line.
-        if is_chorus:
-            lines_el.text = "{it}" + lines_el.text
-            if br_el is None:
-                lines_el.text += "{/it}"
-            else:
-                br_el.tail += "{/it}"
+    def _write_output_file(self):
+        self.filename = self.song_num + "_" + re.sub(r"\W", "_", self.title) + ".xml"
+        file_path = os.path.join(self.out_folder, self.filename)
+        file_path = os.path.realpath(file_path)
+        self.tree.write(file_path, encoding="unicode", xml_declaration=True)
 
 
 if __name__ == "__main__":
 
-    praise = Praise()
+    praise = PraiseScraper(config.OUT_FOLDER)
     praise.login(config.USERNAME, config.PASSWORD)
 
     while True:
         song_num = input("Enter the song number (blank to quit): ")
         if not song_num.strip():
             break
-        url = praise.get_song(song_num)
-        webbrowser.open_new_tab(url)
+        filename = praise.download_song(song_num)
+        print(praise.filename)
+        webbrowser.open_new_tab(praise.url)
