@@ -13,6 +13,9 @@ re_verse_number = re.compile(r'^(\d)*\.?\s*(.*)')
 # parentheses.
 re_copyright_fluff = re.compile(r'(\([^)]*\)|all rights reserved|used by permission|\.)', re.IGNORECASE)
 
+re_author_fluff = re.compile(r'\b(words|music)\b', re.IGNORECASE)
+
+
 class Praise():
     def __init__(self) -> None:
         self.session = requests.Session()
@@ -66,6 +69,11 @@ class Praise():
             if author_label is not None:
                 authors = [a.string for a in author_label.find_next_siblings('a')]
 
+        themes = []
+        themes_label = related.find_next('strong', string='Themes:')
+        if themes_label is not None:
+            themes = [a.string for a in themes_label.find_next_siblings('a')]
+
         copyright_label = related.find_next('strong', string='Copyright:')
         if copyright_label is None:
             copyright = 'Public Domain'
@@ -82,32 +90,17 @@ class Praise():
         })
         root_el.text = '\n'
         tree = ElementTree(root_el)
+        properties_el = self._create_element(root_el, 'properties')
+        titles_el = self._create_element(properties_el, 'titles')
+        self._create_element(titles_el, 'title', title)
+        self._create_element(properties_el, 'copyright', copyright)
+        verse_order_el = self._create_element(properties_el, 'verseOrder')
+        authors_el = self._create_element(properties_el, 'authors')
 
-        properties_el = SubElement(root_el, 'properties')
-        properties_el.text = '\n'
-        properties_el.tail = '\n'
-
-        titles_el = SubElement(properties_el, 'titles')
-        titles_el.text = '\n'
-        titles_el.tail = '\n'
-        title_el = SubElement(titles_el, 'title')
-        title_el.text = title
-        title_el.tail = '\n'
-
-        copy_el = SubElement(properties_el, 'copyright')
-        copy_el.text = copyright
-        copy_el.tail = '\n'
-
-        verse_order_el = SubElement(properties_el, 'verseOrder')
-
-        authors_el = SubElement(properties_el, 'authors')
-        authors_el.text = '\n'
-        authors_el.tail = '\n'
         for author in authors:
             # Don't use the author text if there is is more than just a name.
-            search_author = author.lower()
-            if 'words' in search_author or 'music' in search_author:
-                SubElement(authors_el, 'author')
+            if re_author_fluff.search(author) is not None:
+                self._create_element(authors_el, 'author')
                 continue
             # Remove dates
             author = re.sub(r'\d+-?\d+$', '', author).strip()
@@ -115,21 +108,17 @@ class Praise():
             if author.count(',') == 1:
                 surname, forename = author.split(',')
                 author = forename.lstrip() + ' ' + surname.rstrip()
-            author_el = SubElement(authors_el, 'author')
-            author_el.text = author
-            author_el.tail = '\n'
+            self._create_element(authors_el, 'author', author)
 
-        songbooks_el = SubElement(properties_el, 'songbooks')
-        songbooks_el.tail = '\n'
-        SubElement(songbooks_el, 'songbook').attrib = {
-            'name': 'Praise!',
-            'entry': song_num
-        }
+        if len(themes):
+            themes_el = self._create_element(properties_el, 'themes')
+            for theme in themes:
+                self._create_element(themes_el, 'theme', theme)
 
-        lyrics_el = SubElement(root_el, 'lyrics')
-        lyrics_el.text = '\n'
-        lyrics_el.tail = '\n'
+        songbooks_el = self._create_element(properties_el, 'songbooks')
+        SubElement(songbooks_el, 'songbook', {'name': 'Praise!', 'entry': song_num}).tail = '\n'
 
+        lyrics_el = self._create_element(root_el, 'lyrics')
         verses = title_tag.find_next_siblings('p')
         self._get_verses(verses, lyrics_el, verse_order_el)
 
@@ -138,63 +127,80 @@ class Praise():
         tree.write(filename, encoding='unicode', xml_declaration=True)
         print(filename)
 
+    def _create_element(self, parent: Element, tag: str, text='\n') -> Element:
+        element = SubElement(parent, tag)
+        element.text = text
+        element.tail = '\n'
+        return element
+
     def _get_verses(self, verses, lyrics_el, verse_order_el):
-        chorus_num = 1
+        bridge_num = 0
+        chorus_num = 0
         verse_order = []
         for verse_idx, verse in enumerate(verses):
 
             lines = [line for line in verse.stripped_strings]
+            if len(lines) == 0:
+                continue
 
-            # Separate the verse number from the first line.
-            verse_num, lines[0] = re_verse_number.search(lines[0]).groups()
-
-            # Praise! doesn't number the first verse.
             if verse_idx == 0:
+                # Praise! doesn't number the first verse.
                 verse_num = 1
+            else:
+                # Split the verse number from the first line of the verse.
+                verse_num, lines[0] = re_verse_number.search(lines[0]).groups()
 
-            # Assume that a verse with no number is a chorus.
-            is_chorus = verse_num is None
-            if is_chorus:
-                # If the first line contains an ellipsis, assume it's a chorus
-                # repeat and just add the previous chorus to the verse order.
-                if '…' in lines[0] and chorus_num > 1:
-                    verse_order.append(f'c{chorus_num - 1}')
-
+            is_chorus = False
+            if verse_num:
+                # It's a verse.
+                name = f'v{verse_num}'
+            elif lines[0].lower() == 'bridge:':
+                # It's a bridge.
+                lines = lines[1:]
+                bridge_num += 1
+                name = name = f'b{bridge_num}'
+            else:
+                # It's a chorus.
+                # Is it a chorus repeat?
+                if lines[0].endswith('…') and chorus_num:
+                    # Just add the previous chorus to the verse order.
+                    verse_order.append(f'c{chorus_num}')
                     # Deal with cases where the chorus repeat is at the start
-                    # of a verse paragraph, by checking the next line for a
-                    # verse number.
-                    if len(lines) > 1:
-                        verse_num, lines[1] = re_verse_number.search(lines[1]).groups()
+                    # of a verse paragraph.
+                    lines = lines[1:]
+                    if len(lines) == 0:
+                        # Done with this verse.
+                        continue
+                    verse_num, lines[0] = re_verse_number.search(lines[0]).groups()
                     if verse_num is not None:
-                        # Remove the first line and process as a verse.
-                        lines = lines[1:]
-                        is_chorus = False
+                        # Process as a verse.
                         name = f'v{verse_num}'
+                    elif lines[0].lower() == 'bridge:':
+                        # Process as a bridge.
+                        lines = lines[1:]
+                        bridge_num += 1
+                        name = f'b{bridge_num}'
                     else:
-                        # We're done with this verse.
                         continue
                 else:
-                    # It's a full chorus
-                    name = f'c{chorus_num}'
+                    # It's a full chorus.
+                    if lines[0].lower() == 'chorus:':
+                        lines = lines[1:]
+                    is_chorus = True
                     chorus_num += 1
-            else:
-                # It's a verse
-                name = f'v{verse_num}'
+                    name = f'c{chorus_num}'
 
-            verse_el = SubElement(lyrics_el, 'verse')
-            verse_el.text = '\n'
-            verse_el.tail = '\n'
+            verse_el = self._create_element(lyrics_el, 'verse')
             verse_el.set('name', name)
             verse_order.append(name)
 
-            lines_el = SubElement(verse_el, 'lines')
+            lines_el = self._create_element(verse_el, 'lines')
 
             br_el = None
             for line_idx, line in enumerate(lines):
                 if line_idx == 0:
                     # Add the first line as the <lines> element text.
                     lines_el.text = line
-                    lines_el.tail = '\n'
                 else:
                     # For subsequent lines, add a <br/> element with the line
                     # as the tail.
@@ -211,7 +217,6 @@ class Praise():
                     br_el.tail += '{/it}'
 
         verse_order_el.text = ' '.join(verse_order)
-        verse_order_el.tail = '\n'
 
 
 if __name__ == '__main__':
@@ -225,12 +230,3 @@ if __name__ == '__main__':
             break
         url = praise.get_song(song_num)
         webbrowser.open_new_tab(url)
-
-
-
-
-
-
-
-
-
