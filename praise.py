@@ -173,6 +173,12 @@ class PraiseScraper:
             if verse_idx == 0:
                 # Praise! doesn't number the first verse.
                 verse_num = 1
+                # Praise! uppercases the first line. If the title is the same
+                # as the first line apart from case, then use the title.
+                first_line = lines[0]
+                if first_line.lower().startswith(self.title.lower()):
+                    # Substitute, preserving any trailing punctuation.
+                    lines[0] = self.title + first_line[len(self.title):]
             else:
                 # Split the verse number from the first line of the verse.
                 verse_num, lines[0] = re_verse_number.search(lines[0]).groups()
