@@ -134,7 +134,6 @@ class PraiseScraper:
         for author in self.authors:
             # Don't use the author text if there is is more than just a name.
             if re_author_fluff.search(author) is not None:
-                self._create_element(authors_el, "author")
                 continue
             # Remove dates
             author = re.sub(r"\d+-?\d+$", "", author).rstrip()
@@ -143,6 +142,9 @@ class PraiseScraper:
                 surname, forename = author.split(",")
                 author = forename.lstrip() + " " + surname.rstrip()
             self._create_element(authors_el, "author", author)
+        # If there are no valid authors add an empty author element.
+        if len(list(authors_el)) == 0:
+            SubElement(authors_el, 'author')
 
     def _create_themes(self, properties_el):
         if len(self.themes):
