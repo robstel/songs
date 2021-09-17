@@ -19,19 +19,6 @@ class PraiseScraper:
     def __init__(self, out_folder) -> None:
         self.out_folder = out_folder
         self.session = requests.Session()
-        self.song_num = None
-        self.title = None
-        self.authors = []
-        self.themes = []
-        self.copyright = None
-        self.bridge_num = 0
-        self.chorus_num = 0
-        self.verse_order = []
-        self.tree = None
-        self.verse_order_el = None
-        self.authors_el = None
-        self.url = None
-        self.filename = None
 
     def login(self, username, password):
 
@@ -45,6 +32,19 @@ class PraiseScraper:
         self.session.post("https://www.praise.org.uk/my-account/", credentials)
 
     def download_song(self, song_num: str):
+        self.song_num = None
+        self.title = None
+        self.authors = []
+        self.themes = []
+        self.copyright = None
+        self.bridge_num = 0
+        self.chorus_num = 0
+        self.verse_order = []
+        self.tree = None
+        self.verse_order_el = None
+        self.authors_el = None
+        self.url = None
+        self.filename = None
 
         html = self._get_song(song_num)
         soup = BeautifulSoup(html, "html.parser")
@@ -60,6 +60,7 @@ class PraiseScraper:
         self._create_authors(properties_el)
         self._create_themes(properties_el)
         self._create_songbooks(properties_el)
+        self.verse_order = []
         self._create_lyrics(title_tag, root_el)
         self.verse_order_el.text = " ".join(self.verse_order)
 
