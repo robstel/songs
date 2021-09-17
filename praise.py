@@ -113,7 +113,7 @@ class PraiseScraper:
             {
                 "xmlns": "http://openlyrics.info/namespace/2009/song",
                 "version": "0.8",
-                "createdIn": "PraiseScraper",
+                "createdIn": "PraiseOpenLyrics",
                 "createdDate": datetime.now().replace(microsecond=0).isoformat(),
             },
         )
@@ -198,7 +198,7 @@ class PraiseScraper:
         else:
             # It's a chorus.
             # Is it a chorus repeat?
-            if lines[0].endswith("…") and self.chorus_num:
+            if "…" in lines[0] and self.chorus_num:
                 # Just add the previous chorus to the verse order.
                 self.verse_order.append(f"c{self.chorus_num}")
                 # Deal with cases where the chorus repeat is at the start
