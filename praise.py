@@ -137,7 +137,7 @@ class PraiseScraper:
             if re_author_fluff.search(author) is not None:
                 continue
             # Remove dates
-            author = re.sub(r"\d+-?\d+$", "", author).rstrip()
+            author = re.sub(r"\(?\d+-?\d+\)?$", "", author).rstrip()
             # rearrange "surname, forename"
             if author.count(",") == 1:
                 surname, forename = author.split(",")
