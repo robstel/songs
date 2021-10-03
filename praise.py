@@ -11,7 +11,7 @@ import config
 # Extracts a verse number and text.
 re_verse_number = re.compile(r"^(\d)*\.?\s*(.*)")
 # Unnecessary content in copyright notices, including anything in parentheses.
-re_copyright_fluff = re.compile(r"(Copyright|all rights reserved|used by permission|\.|\([^)]*\))", re.IGNORECASE)
+re_copyright_fluff = re.compile(r"(Copyright|all rights reserved|used by permission|\([^)]*\))", re.IGNORECASE)
 re_author_fluff = re.compile(r"\b(words|music)\b", re.IGNORECASE)
 
 
