@@ -106,7 +106,7 @@ class PraiseScraper:
             self.copyright = "Public Domain"
         else:
             copyright = copyright_label.next_sibling.string
-            self.copyright = re_copyright_fluff.sub("", copyright).strip().title()
+            self.copyright = re_copyright_fluff.sub("", copyright).strip()
 
     def _create_tree(self):
         root_el = Element(
@@ -232,7 +232,7 @@ class PraiseScraper:
         verse_el = self._create_element(lyrics_el, "verse")
         verse_el.set("name", name)
         self.verse_order.append(name)
-        lines_el, br_el = self._create_lines(lines, verse_el)
+        lines_el, br_el = self._create_lines(lines, verse_el, lyrics_el)
 
         if is_chorus:
             self._italicise_chorus(lines_el, br_el)
@@ -246,14 +246,14 @@ class PraiseScraper:
         else:
             br_el.tail += "{/it}"
 
-    def _create_lines(self, lines, verse_el):
+    def _create_lines(self, lines, verse_el, lyrics_el):
         lines_el = self._create_element(verse_el, "lines")
         br_el = None
         for line_idx, line in enumerate(lines):
             num, line = re_verse_number.search(line).groups()
             if num is not None:
                 lines[line_idx] = line
-                self._create_verse(num, lines[line_idx:])
+                self._create_verse(num, lines[line_idx:], lyrics_el)
                 break
 
             if line_idx == 0:
